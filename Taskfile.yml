@@ -1,0 +1,196 @@
+version: '3'
+
+vars:
+  APP_NAME: chatgtg-backend
+  PYTHON_VERSION: 3.12
+  PORT: 8000
+
+tasks:
+  install:
+    desc: Install dependencies using Poetry
+    cmds:
+      - poetry install
+    sources:
+      - pyproject.toml
+      - poetry.lock
+    generates:
+      - .venv/**/*
+
+  setup:
+    desc: Setup the project (install dependencies and create .env)
+    cmds:
+      - task: install
+      - |
+        if [ ! -f .env ]; then
+          cp .env.template .env
+          echo "✅ Created .env file from template"
+          echo "⚠️  Please update .env with your actual credentials"
+        else
+          echo "✅ .env file already exists"
+        fi
+
+  dev:
+    desc: Start the development server
+    deps: [install]
+    cmds:
+      - poetry run fastapi dev app/main.py
+    interactive: true
+
+  run:
+    desc: Start the production server
+    deps: [install]
+    cmds:
+      - poetry run fastapi run app/main.py --host 0.0.0.0 --port {{.PORT}}
+
+  test-health:
+    desc: Test the health endpoint
+    cmds:
+      - curl -X GET "http://localhost:{{.PORT}}/healthz" -H "accept: application/json" | jq
+
+  test-mcp-info:
+    desc: Test the MCP info endpoint
+    cmds:
+      - curl -X GET "http://localhost:{{.PORT}}/mcp/info" -H "accept: application/json" | jq
+
+  test-chat:
+    desc: Test the chat endpoint with a sample message
+    cmds:
+      - |
+        curl -X POST "http://localhost:{{.PORT}}/chat" \
+          -H "Content-Type: application/json" \
+          -H "accept: application/json" \
+          -d '{
+            "messages": [
+              {"role": "user", "content": "Hello, can you search for documents about Python programming?"}
+            ]
+          }' | jq
+
+  test-search:
+    desc: Test the document search endpoint
+    cmds:
+      - |
+        curl -X POST "http://localhost:{{.PORT}}/search" \
+          -H "Content-Type: application/json" \
+          -H "accept: application/json" \
+          -d '{
+            "query": "Python programming",
+            "limit": 5
+          }' | jq
+
+  test-github-ingest:
+    desc: Test GitHub repository ingestion
+    cmds:
+      - |
+        curl -X POST "http://localhost:{{.PORT}}/ingest_github" \
+          -H "Content-Type: application/json" \
+          -H "accept: application/json" \
+          -d '{
+            "repository_url": "https://github.com/python/cpython",
+            "branch": "main",
+            "file_patterns": ["*.py", "*.md"],
+            "max_file_size": 1048576
+          }' | jq
+
+  test-document-count:
+    desc: Test the document count endpoint
+    cmds:
+      - curl -X GET "http://localhost:{{.PORT}}/documents/count" -H "accept: application/json" | jq
+
+  test-all:
+    desc: Run all API tests
+    cmds:
+      - echo "🧪 Testing ChatGTG API endpoints..."
+      - echo "1. Testing health endpoint..."
+      - task: test-health
+      - echo "2. Testing MCP info endpoint..."
+      - task: test-mcp-info
+      - echo "3. Testing document count endpoint..."
+      - task: test-document-count
+      - echo "4. Testing document search endpoint..."
+      - task: test-search
+      - echo "5. Testing chat endpoint..."
+      - task: test-chat
+      - echo "✅ All basic tests completed!"
+
+  test-mcp-cli:
+    desc: Test MCP server using mcp-cli (requires mcp-cli to be installed)
+    cmds:
+      - echo "🔧 Testing MCP server with mcp-cli..."
+      - echo "Note: This requires mcp-cli to be installed and configured"
+      - echo "Available MCP tools:"
+      - mcp-cli tool list --server chatgtg || echo "❌ mcp-cli not available or not configured"
+
+  docs:
+    desc: Open API documentation in browser
+    cmds:
+      - echo "📚 Opening API documentation..."
+      - echo "Swagger UI: http://localhost:{{.PORT}}/docs"
+      - echo "ReDoc: http://localhost:{{.PORT}}/redoc"
+
+  clean:
+    desc: Clean up generated files and caches
+    cmds:
+      - rm -rf __pycache__
+      - rm -rf .pytest_cache
+      - rm -rf app/__pycache__
+      - rm -rf app/services/__pycache__
+      - find . -name "*.pyc" -delete
+      - find . -name "*.pyo" -delete
+
+  lint:
+    desc: Run code linting
+    deps: [install]
+    cmds:
+      - poetry run ruff check app/
+      - poetry run black --check app/
+
+  format:
+    desc: Format code
+    deps: [install]
+    cmds:
+      - poetry run black app/
+      - poetry run ruff check --fix app/
+
+  check-env:
+    desc: Check if environment variables are properly configured
+    cmds:
+      - |
+        echo "🔍 Checking environment configuration..."
+        if [ ! -f .env ]; then
+          echo "❌ .env file not found. Run 'task setup' first."
+          exit 1
+        fi
+        
+        # Check required variables
+        source .env
+        
+        if [ "$MONGODB_URI" = "mongodb+srv://username:password@cluster.mongodb.net/" ]; then
+          echo "⚠️  MONGODB_URI is still using template values"
+        else
+          echo "✅ MONGODB_URI is configured"
+        fi
+        
+        if [ "$OPENAI_API_KEY" = "your-api-key-here" ]; then
+          echo "⚠️  OPENAI_API_KEY is still using template values"
+        else
+          echo "✅ OPENAI_API_KEY is configured"
+        fi
+        
+        if [ "$GITHUB_TOKEN" = "your-github-token-here" ]; then
+          echo "⚠️  GITHUB_TOKEN is still using template values"
+        else
+          echo "✅ GITHUB_TOKEN is configured"
+        fi
+
+  full-test:
+    desc: Complete testing workflow (setup, start server, run tests)
+    cmds:
+      - task: setup
+      - task: check-env
+      - echo "🚀 Starting server in background..."
+      - echo "Please run 'task dev' in another terminal, then run 'task test-all'"
+
+  help:
+    desc: Show available tasks
+    cmds:
+      - task --list
